@@ -1,5 +1,5 @@
 import * as cdk from 'aws-cdk-lib';
-import {RemovalPolicy, Stack} from 'aws-cdk-lib';
+import {CfnOutput, Duration, RemovalPolicy, Stack, StackProps} from 'aws-cdk-lib';
 import {Construct} from 'constructs';
 import {
     BuildEnvironmentVariableType,
@@ -21,11 +21,14 @@ import {
 } from "aws-cdk-lib/aws-elasticloadbalancingv2";
 import {createCodeBuildProjectPolicy} from "./util";
 
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
+interface ServerStackProps extends StackProps {
+    frontendBucketName: string
+}
 
 export class ServerStack extends Stack {
+    serverCodeBuildProject: Project;
 
-    constructor(scope: Construct, id: string, props?: cdk.StackProps) {
+    constructor(scope: Construct, id: string, props: ServerStackProps) {
         super(scope, id, props);
 
         const vpc = this.createVPC();
@@ -43,12 +46,16 @@ export class ServerStack extends Stack {
             defaultTargetGroups: [targetGroup]
         });
 
-        const project = this.createCodebuildProject(cluster, ecsService);
-        ecrRepo.grantPullPush(project);
+        this.serverCodeBuildProject = this.createCodebuildProject(cluster, ecsService, props.frontendBucketName);
+        ecrRepo.grantPullPush(this.serverCodeBuildProject);
 
+        new CfnOutput(this, "ALB Url", {
+            key: "ALBUrl",
+            value: loadBalancer.loadBalancerDnsName
+        });
     }
 
-    private createCodebuildProject(cluster: Cluster, ecsService: Ec2Service) {
+    private createCodebuildProject(cluster: Cluster, ecsService: Ec2Service, frontendBucketName: string) {
         const source = Source.gitHub({
             owner: 'knk190001',
             repo: 'CS-4485-Team-45-Server',
@@ -72,11 +79,17 @@ export class ServerStack extends Stack {
                     "SERVICE_NAME": {
                         type: BuildEnvironmentVariableType.PLAINTEXT,
                         value: ecsService.serviceName
+                    },
+                    "STATIC_BUCKET_NAME": {
+                        type: BuildEnvironmentVariableType.PLAINTEXT,
+                        value: frontendBucketName
                     }
                 }
             },
             buildSpec: BuildSpec.fromSourceFilename('buildspec.yml'),
+
         });
+
 
         const policy = createCodeBuildProjectPolicy(this);
         project.role?.attachInlinePolicy(policy);
@@ -164,7 +177,7 @@ export class ServerStack extends Stack {
     private createLoadBalancer(vpc: Vpc) {
         return new ApplicationLoadBalancer(this, 'ALB', {
             vpc,
-            internetFacing: true
+            internetFacing: true,
         });
     }
 
@@ -180,7 +193,8 @@ export class ServerStack extends Stack {
             targets: [ecsService.loadBalancerTarget({
                 containerName: 'DefaultContainer',
                 containerPort: 80
-            })]
+            })],
+            deregistrationDelay: Duration.seconds(20)
         });
     }
 }

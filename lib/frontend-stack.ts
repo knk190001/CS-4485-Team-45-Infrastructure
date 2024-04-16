@@ -1,27 +1,34 @@
-import {CfnOutput, RemovalPolicy, Stack, StackProps} from "aws-cdk-lib";
+import {RemovalPolicy, Stack, StackProps} from "aws-cdk-lib";
 import {Construct} from "constructs";
-import {AllowedMethods, Distribution, OriginAccessIdentity, ViewerProtocolPolicy} from "aws-cdk-lib/aws-cloudfront";
 import {BlockPublicAccess, Bucket} from "aws-cdk-lib/aws-s3";
-import {CanonicalUserPrincipal, ManagedPolicy, PolicyStatement} from "aws-cdk-lib/aws-iam";
-import {S3Origin} from "aws-cdk-lib/aws-cloudfront-origins";
-import {BuildSpec, EventAction, FilterGroup, LinuxBuildImage, Project, Source} from "aws-cdk-lib/aws-codebuild";
+import {ManagedPolicy} from "aws-cdk-lib/aws-iam";
+import {
+    BuildEnvironmentVariableType,
+    BuildSpec,
+    EventAction,
+    FilterGroup,
+    LinuxBuildImage,
+    Project,
+    Source
+} from "aws-cdk-lib/aws-codebuild";
 import {createCodeBuildProjectPolicy} from "./util";
 
+interface FrontendStackProps extends StackProps {
+    frontendBucketName: string,
+    serverCodeBuildProject: Project
+}
+
 export class FrontendStack extends Stack {
-    constructor(scope: Construct, id: string, props: StackProps) {
+    constructor(scope: Construct, id: string, props: FrontendStackProps) {
         super(scope, id, props);
 
-        const cloudfrontOAI = new OriginAccessIdentity(this, 'CloudFront-OAI');
-        const frontendBucket = this.createFrontendBucket(<string>props.env?.account);
-        this.grantS3AccessToCloudFront(frontendBucket, cloudfrontOAI);
-
-        const distribution = this.createDistribution(frontendBucket, cloudfrontOAI);
-        this.createCodebuildProject(frontendBucket, distribution);
+        const frontendBucket = this.createFrontendBucket(props.frontendBucketName);
+        this.createCodebuildProject(frontendBucket, props.serverCodeBuildProject);
     }
 
-    private createFrontendBucket(accountId: string) {
+    private createFrontendBucket(bucketName: string) {
         return new Bucket(this, 'FrontendBucket', {
-            bucketName: `frontend-bucket-${accountId}`,
+            bucketName: bucketName,
             publicReadAccess: false,
             blockPublicAccess: BlockPublicAccess.BLOCK_ALL,
             removalPolicy: RemovalPolicy.DESTROY,
@@ -29,34 +36,8 @@ export class FrontendStack extends Stack {
         });
     }
 
-    private grantS3AccessToCloudFront(frontendBucket: Bucket, cloudfrontOAI: OriginAccessIdentity) {
-        frontendBucket.addToResourcePolicy(
-            new PolicyStatement({
-                actions: ['s3:GetObject'],
-                resources: [frontendBucket.arnForObjects('*')],
-                principals: [new CanonicalUserPrincipal(cloudfrontOAI.cloudFrontOriginAccessIdentityS3CanonicalUserId)]
-            })
-        );
-    }
 
-    private createDistribution(frontendBucket: Bucket, cloudfrontOAI: OriginAccessIdentity) {
-        const distribution = new Distribution(this, "FrontendDistribution", {
-            defaultRootObject: "index.html",
-            defaultBehavior: {
-                origin: new S3Origin(frontendBucket, {originAccessIdentity: cloudfrontOAI}),
-                compress: true,
-                allowedMethods: AllowedMethods.ALLOW_GET_HEAD_OPTIONS,
-                viewerProtocolPolicy: ViewerProtocolPolicy.ALLOW_ALL
-            }
-        });
-
-        new CfnOutput(this, `DistributionUrl`, {
-            value: distribution.distributionDomainName
-        });
-        return distribution;
-    }
-
-    private createCodebuildProject(frontendBucket: Bucket, distribution: Distribution) {
+    private createCodebuildProject(frontendBucket: Bucket, serverCodeBuildProject: Project) {
         const source = Source.gitHub({
             owner: 'knk190001',
             repo: 'CS-4485-Team-45-Frontend',
@@ -71,9 +52,19 @@ export class FrontendStack extends Stack {
             source: source,
             environment: {
                 buildImage: LinuxBuildImage.STANDARD_6_0,
-                privileged: true
+                privileged: true,
+                environmentVariables: {
+                    "ASSET_BUCKET_NAME": {
+                        type: BuildEnvironmentVariableType.PLAINTEXT,
+                        value: frontendBucket.bucketName
+                    },
+                    "SERVER_PROJECT_NAME": {
+                        type: BuildEnvironmentVariableType.PLAINTEXT,
+                        value: serverCodeBuildProject.projectName
+                    }
+                }
             },
-            buildSpec: FrontendStack.getBuildSpec(frontendBucket, distribution),
+            buildSpec: BuildSpec.fromSourceFilename("./buildspec.yml"),
         });
 
         frontendCodebuildProject.role?.attachInlinePolicy(createCodeBuildProjectPolicy(this));
@@ -82,33 +73,5 @@ export class FrontendStack extends Stack {
         frontendCodebuildProject.role?.addManagedPolicy(ManagedPolicy.fromManagedPolicyArn(this,
             "S3-Policy", "arn:aws:iam::aws:policy/AmazonS3FullAccess"));
 
-    }
-
-    private static getBuildSpec(frontendBucket: Bucket, distribution: Distribution) {
-        return BuildSpec.fromObjectToYaml({
-            version: '0.2',
-            phases: {
-                pre_build: {
-                    commands: [
-                        'npm ci'
-                    ]
-                },
-
-                build: {
-                    commands: ['npm run build']
-                },
-
-                post_build: {
-                    commands: [
-                        'echo Clearing distribution bucket',
-                        `aws s3 rm s3://${frontendBucket.bucketName}/ --recursive`,
-                        'echo Uploading artifacts',
-                        `aws s3 cp ./dist s3://${frontendBucket.bucketName} --recursive`,
-                        'echo Invalidating distribution',
-                        `aws cloudfront create-invalidation --distribution-id ${distribution.distributionId} --paths '/*'`,
-                    ]
-                }
-            }
-        });
     }
 }

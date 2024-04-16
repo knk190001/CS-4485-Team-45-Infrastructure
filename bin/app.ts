@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import 'source-map-support/register';
 import * as cdk from 'aws-cdk-lib';
-import { ServerStack } from '../lib/server-stack';
+import {ServerStack} from '../lib/server-stack';
 import {FrontendStack} from "../lib/frontend-stack";
 
 const env = {
@@ -10,5 +10,10 @@ const env = {
 }
 
 const app = new cdk.App();
-new ServerStack(app, 'InfrastructureStack', { env });
-new FrontendStack(app, 'FrontendStack', { env });
+const frontendBucketName = `frontend-bucket-${env.account}`
+const serverStack = new ServerStack(app, 'InfrastructureStack', {env, frontendBucketName});
+new FrontendStack(app, 'FrontendStack', {
+    env,
+    frontendBucketName,
+    serverCodeBuildProject: serverStack.serverCodeBuildProject
+});

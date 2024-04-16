@@ -12,11 +12,14 @@ export function createCodeBuildProjectPolicy(scope: Construct) {
             "ec2:DescribeSubnets",
             "ec2:DescribeSecurityGroups",
             "ec2:DescribeVpcs",
-            "ecs:UpdateService"
+            "ecs:UpdateService",
+            "codebuild:StartBuild",
+            "s3:GetObject",
+            "s3:ListBucket"
         ],
         resources: ["*"]
     });
-    return new Policy(scope, 'ServerProjectPolicy', {
+    return new Policy(scope, 'CodeBuildProjectPolicy', {
         statements: [policyStatement]
     });
 }
