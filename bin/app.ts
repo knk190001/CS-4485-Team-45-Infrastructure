@@ -11,7 +11,21 @@ const env = {
 
 const app = new cdk.App();
 const frontendBucketName = `frontend-bucket-${env.account}`
-const serverStack = new ServerStack(app, 'InfrastructureStack', {env, frontendBucketName});
+const serverStack = new ServerStack(app, 'InfrastructureStack', {
+    env,
+    frontendBucketName,
+    dbArgs: {
+        dbUsername: 'server',
+        securityGroupIds: [
+            'sg-0298135b78b61ee04',
+            'sg-01468554c0d549426',
+            'sg-0c9a850a91b788ff3'
+        ],
+        instanceIdentifier: 'main-db',
+        instanceEndpointAddress: 'main-db.cx84qm2oykjx.us-west-2.rds.amazonaws.com',
+        instanceResourceId: 'db-LACHMJY73SGPB6OBGVN4DJKZG4'
+    }
+});
 new FrontendStack(app, 'FrontendStack', {
     env,
     frontendBucketName,
